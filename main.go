@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"time"
+	"unsafe"
 
 	g "github.com/gosnmp/gosnmp"
 )
@@ -17,13 +18,13 @@ func main() {
 
 	// how often to poll the target, in seconds
 	envPollPeriod := os.Getenv("XJOB_POLLPERIOD") // need to be converted to integer?
+	pollPeriod, _ := strconv.ParseUint(envPollPeriod, 10, 16)
 
 	// just make sure they aren't screamed at for the time being
 	fmt.Print(filename)
-	fmt.Print(envPollPeriod)
 
 	////////////////////////////////////////////////////
-	// begin gosnmp example
+	// begin gosnmp example code stuff
 	////////////////////////////////////////////////////
 
 	// get Target, Port, and Community from environment vars to avoid leaking info via source code
@@ -53,6 +54,7 @@ func main() {
 	}
 
 	// connect using the connection parameters
+	// WHAT?!!! We're using UDP but still connect?
 	err := connectionParams.Connect()
 	if err != nil {
 		log.Fatalf("Connect() err: %v", err)
@@ -71,12 +73,36 @@ func main() {
 	// retrieve list of OIDs
 	oids := selectOidArr("numbers")
 
+	////////////////////////////////////////////////////
+	// this part below is the one we want to do repeatedly
+	////////////////////////////////////////////////////
+
+	// goroutine for doing a thing every pollPeriod seconds
+	go func() {
+		for range time.Tick(time.Second * time.Duration(pollPeriod)) {
+			snmpPoll(connectionParams, oids)
+		}
+	}()
+
+}
+
+// polls a specified target by sending a SNMP Get message and prints the reply
+// input:
+//	connectionparams: that one struct we put together before
+//	oids: the SNMP OIDs that we want to get info about
+func snmpPoll(connectionParams *g.GoSNMP, oids []string) {
+
+	// send SNMP GET request with the specified OIDs
 	result, err2 := connectionParams.Get(oids)
 	if err2 != nil {
 		log.Fatalf("Get() err: %v", err2)
 	}
 
-	// print the result
+	// print the size of the struct
+	// TODO do that cool calculation thing!
+	fmt.Print(unsafe.Sizeof(result))
+
+	// print the result to stdOut
 	for i, variable := range result.Variables {
 		fmt.Printf("%d: oid: %s ", i, variable.Name)
 
@@ -85,20 +111,16 @@ func main() {
 			fmt.Printf("string: %s\n", string(variable.Value.([]byte)))
 		default:
 			fmt.Printf("number: %d\n", g.ToBigInt(variable.Value))
-
 		}
-
 	}
-
 }
 
-// Creates a file for logging to
+// Creates a file that is unique to each run
 // Input: none
 // Output: a (hopefully) unique filename in string format
 func createFile() string {
 
-	fileNamePrefix := "xjob_snmp_replies_"
-	filename := fileNamePrefix + time.Now().Format("2006-01-02T15:04:05Z07:00") + ".txt" // RFC3339 format
+	filename := "xjob_snmp_replies_" + time.Now().Format("2006-01-02T15:04:05Z07:00") + ".txt" // RFC3339 format
 
 	// remove any old duplicate
 	err := os.Remove(filename)
@@ -122,6 +144,7 @@ func createFile() string {
 // 	target:	a file to write to
 //	input:	a string that shall be written to the file
 func writeToFile(target string, input string) error {
+
 	file, err := os.OpenFile(target, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
@@ -137,6 +160,10 @@ func writeToFile(target string, input string) error {
 	return nil
 }
 
+// Pick what OIDs we should use
+// Highly unclear if we even need this but it's nice to have hidden down here
+// Input:
+//	oidFormat: a string stating what OID "format" to use
 func selectOidArr(oidFormat string) []string {
 
 	// OIDs in dot separated form
@@ -182,5 +209,4 @@ func selectOidArr(oidFormat string) []string {
 	} else {
 		return nil
 	}
-
 }
