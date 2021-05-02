@@ -18,6 +18,10 @@ func main() {
 	// how often to poll the target, in seconds
 	envPollPeriod := os.Getenv("XJOB_POLLPERIOD") // need to be converted to integer?
 
+	// just make sure they aren't screamed at for the time being
+	fmt.Print(filename)
+	fmt.Print(envPollPeriod)
+
 	////////////////////////////////////////////////////
 	// begin gosnmp example
 	////////////////////////////////////////////////////
