@@ -8,47 +8,25 @@ import (
 	"time"
 	"unsafe"
 
-	g "github.com/gosnmp/gosnmp"
+	// name the import
+	snmp "github.com/gosnmp/gosnmp"
 )
 
 func main() {
 
-	// create a file to log replies to
-	filename := createFile()
-
-	// how often to poll the target, in seconds
-	envPollPeriod := os.Getenv("XJOB_POLLPERIOD")
-	pollPeriod, _ := strconv.ParseUint(envPollPeriod, 10, 16)
-
-	////////////////////////////////////////////////////
-	// begin gosnmp example code stuff
-	////////////////////////////////////////////////////
-
-	// get Target, Port, and Community from environment vars to avoid leaking info via source code
-	envTarget := os.Getenv("XJOB_SNMP_TARGET")
-	envPort := os.Getenv("XJOB_SNMP_PORT")
-	envCommunity := os.Getenv("XJOB_SNMP_COMMUNITY")
-	if len(envTarget) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_TARGET")
-	}
-	if len(envPort) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_PORT")
-	}
-	if len(envCommunity) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_COMMUNITY")
-	}
-	port, _ := strconv.ParseUint(envPort, 10, 16)
+	// setup environment variables
+	fileName, pollPeriod, envTarget, envCommunity, port := setup()
 
 	// put together a struct containing connection parameters
-	connectionParams := &g.GoSNMP{
+	connectionParams := &snmp.GoSNMP{
 		Target:    envTarget,                      // the network node that we want to reply
 		Transport: "udp",                          // the transport protocol to use
 		Port:      uint16(port),                   // the UDP port to be used
-		Version:   g.Version2c,                    // the SNMP version to use
+		Version:   snmp.Version2c,                 // the SNMP version to use
 		Community: envCommunity,                   // the SNMPv2c community string to be used
 		Logger:    log.New(os.Stdout, "", 0),      // add a logger
 		Timeout:   time.Duration(2) * time.Second, // the timeout from the request in seconds
-		MaxOids:   60,                             // max OIDs permitted in a single call, 60 "seems to be a common value that works"
+		MaxOids:   60,                             // max OIDs permitted in a single call, default 60
 	}
 
 	// create a socket to utilize
@@ -60,147 +38,149 @@ func main() {
 
 	// latency logging
 	var sent time.Time
-	connectionParams.OnSent = func(x *g.GoSNMP) {
+	connectionParams.OnSent = func(x *snmp.GoSNMP) {
 		sent = time.Now()
 	}
-	connectionParams.OnRecv = func(x *g.GoSNMP) {
+	connectionParams.OnRecv = func(x *snmp.GoSNMP) {
 		log.Println("Query latency in seconds:", time.Since(sent).Seconds())
 	}
 
 	// retrieve list of OIDs
 	oids := selectOidArr("numbers")
 
-	////////////////////////////////////////////////////
-	// this part below is the one we want to do repeatedly
-	////////////////////////////////////////////////////
-
 	// goroutine for doing a thing every pollPeriod seconds
 	go func() {
 		for range time.Tick(time.Second * time.Duration(pollPeriod)) {
-			//			snmpPoll(connectionParams, oids, filename)
+			sizeOfRequest := snmpMockRequest(connectionParams, oids)
+			sizeOfResponse := snmpPoll(connectionParams, oids)
 
-			// send SNMP GET request with the specified OIDs
-			result, err2 := connectionParams.Get(oids)
-			if err2 != nil {
-				log.Fatalf("Get() err: %v", err2)
-			}
-
-			// craft a SnmpPacket to check its size
-
-			fmt.Print(connectionParams.Version)
-
-			var pdus []g.SnmpPDU
-			for _, oid := range oids {
-				pdus = append(pdus, g.SnmpPDU{oid, g.Null, nil})
-			}
-
-			// need & before? just wanna make a snmp packet type struct
-			request := g.SnmpPacket{
-				Version:            0x1,                                 // Version2c SnmpVersion = 0x1
-				Community:          envCommunity,                        // community from env variable
-				MsgFlags:           1,                                   // <- v3, need to figure out how to ignore gracefully
-				SecurityModel:      1,                                   // <- v3, need to figure out how to ignore gracefully
-				SecurityParameters: connectionParams.SecurityParameters, // an INTERFACE, need to figure out how to ignore gracefully
-				ContextEngineID:    connectionParams.ContextEngineID,    // <- v3, need to figure out how to ignore gracefully
-				ContextName:        connectionParams.ContextName,        // <- v3, need to figure out how to ignore gracefully
-				Error:              0,                                   // SNMPError 0 *should* be the lowest enum i.e. NoError
-				ErrorIndex:         0,                                   // uint8, 0 default
-				PDUType:            0xa0,                                // GetRequest PDUType = 0xa0
-				NonRepeaters:       0,                                   // uint8 0 default
-				MaxRepetitions:     (777 & 0x7FFFFFFF),                  // placeholder maxreps
-				Variables:          pdus,                                // got them from above, hopefully they work...
-			}
-
-			// get the byte array form of the packet so we can check the size of it
-			requestSize, err3 := request.MarshalMsg()
-			if err3 != nil {
-				log.Fatal(err)
-			}
-
-			resultSize, err := result.MarshalMsg()
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			fmt.Print(resultSize)
-			fmt.Print(unsafe.Sizeof(result))
-
-			writeToFile(
-				filename,
-				"size of request: "+string(requestSize)+
-					", size of response: "+string(resultSize)+
-					", total size: "+string((requestSize+resultSize)))
-
-			// print the content of result to stdOut
-			for i, variable := range result.Variables {
-				fmt.Printf("%d: oid: %s ", i, variable.Name)
-
-				switch variable.Type {
-				case g.OctetString:
-					fmt.Printf("string: %s\n", string(variable.Value.([]byte)))
-				default:
-					fmt.Printf("number: %d\n", g.ToBigInt(variable.Value))
-				}
-			}
-
+			// write these as just the integers so we can do CSV format?
+			sizes := fmt.Sprintf(" size of request: %d, size of response: %d, total size: %d",
+				sizeOfRequest, sizeOfResponse, (sizeOfRequest + sizeOfResponse))
+			writeToFile(fileName, sizes)
 		}
 	}()
+}
 
+// get the environment variables and turn them into usable variables
+// Output:
+//	fileName:			the name of the file to write to
+//	pollPeriod: 	how often to poll the target, in seconds
+//	envTarget:		ip address of target
+//	envPort:			the udp port to use
+//	envCommunity:	the SNMPv2c community to use
+func setup() (string, uint64, string, string, uint64) {
+	fileName := createFile()
+	envPollPeriod := os.Getenv("XJOB_POLLPERIOD")
+	envTarget := os.Getenv("XJOB_SNMP_TARGET")
+	envCommunity := os.Getenv("XJOB_SNMP_COMMUNITY")
+	envPort := os.Getenv("XJOB_SNMP_PORT")
+
+	if len(envPollPeriod) <= 0 {
+		log.Fatal("environment variable not set: XJOB_SNMP_TARGET")
+	}
+	if len(envTarget) <= 0 {
+		log.Fatal("environment variable not set: XJOB_SNMP_TARGET")
+	}
+	if len(envPort) <= 0 {
+		log.Fatal("environment variable not set: XJOB_SNMP_PORT")
+	}
+	if len(envCommunity) <= 0 {
+		log.Fatal("environment variable not set: XJOB_SNMP_COMMUNITY")
+	}
+
+	pollPeriod, _ := strconv.ParseUint(envPollPeriod, 10, 16)
+	port, _ := strconv.ParseUint(envPort, 10, 16)
+
+	return fileName, pollPeriod, envTarget, envCommunity, port
+}
+
+// craft a mock SnmpPacket to check its size
+// Input:
+//	connectionparams: that one struct we put together before
+//	oids:							the SNMP OIDs that we want to get info about
+// Output:
+//	sizeOfRequest:		the size in bytes of the mock SNMP request
+func snmpMockRequest(connectionParams *snmp.GoSNMP, oids []string) int {
+	var pdus []snmp.SnmpPDU
+	for _, oid := range oids {
+		pdus = append(pdus, snmp.SnmpPDU{oid, snmp.Null, nil})
+	}
+
+	// need & before? just wanna make a snmp packet type struct
+	mockRequest := snmp.SnmpPacket{
+		Version:            0x1,                                 // Version2c SnmpVersion = 0x1
+		Community:          connectionParams.Community,          // community from env variable
+		MsgFlags:           1,                                   // <- v3
+		SecurityModel:      1,                                   // <- v3
+		SecurityParameters: connectionParams.SecurityParameters, // <- v3
+		ContextEngineID:    connectionParams.ContextEngineID,    // <- v3
+		ContextName:        connectionParams.ContextName,        // <- v3
+		Error:              0,                                   // SNMPError 0 *should* be the lowest enum i.e. NoError
+		ErrorIndex:         0,                                   // uint8, 0 default
+		PDUType:            0xa0,                                // GetRequest PDUType = 0xa0
+		NonRepeaters:       0,                                   // uint8 0 default
+		MaxRepetitions:     (777 & 0x7FFFFFFF),                  // placeholder maxreps
+		Variables:          pdus,                                // as specified from above
+	}
+
+	// get the byte array form of the packet so we can check the size of it
+	requestSize, err := mockRequest.MarshalMsg()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sizeOfRequest := len(requestSize)
+
+	return sizeOfRequest
 }
 
 // polls a specified target by sending a SNMP Get message and prints the reply
-// input:
+// Input:
 //	connectionparams: that one struct we put together before
-//	oids: the SNMP OIDs that we want to get info about
-
-// moved most of the code up above to avoid having to bombard this function with variables..
-func snmpPoll(connectionParams *g.GoSNMP, oids []string, filename string) {
+//	oids: 						the SNMP OIDs that we want to get info about
+//	envCommunity: 		the SNMPv2c community string to use
+// Output:
+//	sizeOfResponse:		the size in bytes of the SNMP response
+func snmpPoll(connectionParams *snmp.GoSNMP, oids []string) int {
 
 	// send SNMP GET request with the specified OIDs
-	result, err2 := connectionParams.Get(oids)
+	snmpGetResponse, err2 := connectionParams.Get(oids)
 	if err2 != nil {
 		log.Fatalf("Get() err: %v", err2)
 	}
 
-	packetOut := x.mkSnmpPacket(GetRequest, pdus, 0, 0)
-
-	resultSize, err := result.MarshalMsg()
+	responseSize, err := snmpGetResponse.MarshalMsg()
 	if err != nil {
 		log.Fatal(err)
 	}
+	sizeOfResponse := len(responseSize)
 
-	writeToFile(
-		filename,
-		"size of request: "+string(requestSize)+
-			", size of response: "+string(resultSize)+
-			", total size: "+string((requestSize+resultSize)))
-
-	fmt.Print(resultSize)
-	fmt.Print(unsafe.Sizeof(result))
+	fmt.Print(unsafe.Sizeof(snmpGetResponse), "\n") // just to see if we can get anything here
 
 	// print the content of result to stdOut
-	for i, variable := range result.Variables {
+	for i, variable := range snmpGetResponse.Variables {
 		fmt.Printf("%d: oid: %s ", i, variable.Name)
 
 		switch variable.Type {
-		case g.OctetString:
+		case snmp.OctetString:
 			fmt.Printf("string: %s\n", string(variable.Value.([]byte)))
 		default:
-			fmt.Printf("number: %d\n", g.ToBigInt(variable.Value))
+			fmt.Printf("number: %d\n", snmp.ToBigInt(variable.Value))
 		}
 	}
 
+	return sizeOfResponse
 }
 
 // Creates a file that is unique to each run
-// Input: none
-// Output: a (hopefully) unique filename in string format
+// Output:
+//	fileName:	a (hopefully) unique filename in string format
 func createFile() string {
 
-	filename := "xjob_snmp_replies_" + time.Now().Format("2006-01-02T15:04:05Z07:00") + ".txt" // RFC3339 format
+	fileName := "xjob_snmp_replies_" + time.Now().Format("2006-01-02T15:04:05Z07:00") + ".txt" // RFC3339 format
 
 	// remove any old duplicate
-	err := os.Remove(filename)
+	err := os.Remove(fileName)
 	if err != nil {
 		log.Println("Did not delete any old file with same name")
 	} else {
@@ -208,12 +188,12 @@ func createFile() string {
 	}
 
 	// create a new file with the specified filename
-	_, err = os.Create(filename)
+	_, err = os.Create(fileName)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	return filename
+	return fileName
 }
 
 // Writes the provided input to a file
@@ -241,6 +221,8 @@ func writeToFile(target string, input string) error {
 // Highly unclear if we even need this but it's nice to have hidden down here
 // Input:
 //	oidFormat: a string stating what OID "format" to use
+// Output:
+//	oids || oidNames:	a string array of OIDs in integer or named form.
 func selectOidArr(oidFormat string) []string {
 
 	// OIDs in dot separated form

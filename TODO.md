@@ -1,15 +1,13 @@
 ## TODOS
 
-* [] craft snmp get packet
-* [] get size of it
-
 
 ## TEST
 
 * [] polling loop
-* [] add logging to file of SNMP replies
+* [] craft snmp get packet
+* [] get size of it
 * [] calculate cost of message
-
+* [] add logging to file of SNMP replies
 
 ## DONE
 
