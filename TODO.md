@@ -1,12 +1,14 @@
 ## TODOS
 
-* [] add logging to file of SNMP replies
-* [] calculate size of reply
+* [] craft snmp get packet
+* [] get size of it
 
 
 ## TEST
 
 * [] polling loop
+* [] add logging to file of SNMP replies
+* [] calculate cost of message
 
 
 ## DONE
@@ -34,9 +36,10 @@ In a goroutine that fires every X seconds {
   log the message text to a file  
 }  
 use a ticker instead of that goroutine? https://gobyexample.com/tickers
+https://stackoverflow.com/questions/16466320/is-there-a-way-to-do-repetitive-tasks-at-intervals
 
 (log the size in bytes of the message somehow (to the same file as the replies?))
-
+https://stackoverflow.com/questions/2113751/sizeof-struct-in-go
 
 ## COMMENTS & QUESTIONS
 
@@ -55,3 +58,8 @@ should maybe be getting the size of the parts of the struct?
 `SnmpPacket struct represents the entire SNMP Message or Sequence at the application layer.`
 soooo it's a decoded message?  
 how much overhead is added by a struct in go?
+ok so it appears to be quite not straightforward  
+will likely require to get the size of each underlying element
+especially the variables []SnmpPDU-array thing could prove difficult  
+the rest should just be possible to take straight out  
+provided they are relevant for snmpv2c

@@ -17,11 +17,8 @@ func main() {
 	filename := createFile()
 
 	// how often to poll the target, in seconds
-	envPollPeriod := os.Getenv("XJOB_POLLPERIOD") // need to be converted to integer?
+	envPollPeriod := os.Getenv("XJOB_POLLPERIOD")
 	pollPeriod, _ := strconv.ParseUint(envPollPeriod, 10, 16)
-
-	// just make sure they aren't screamed at for the time being
-	fmt.Print(filename)
 
 	////////////////////////////////////////////////////
 	// begin gosnmp example code stuff
@@ -45,16 +42,16 @@ func main() {
 	// put together a struct containing connection parameters
 	connectionParams := &g.GoSNMP{
 		Target:    envTarget,                      // the network node that we want to reply
+		Transport: "udp",                          // the transport protocol to use
 		Port:      uint16(port),                   // the UDP port to be used
 		Version:   g.Version2c,                    // the SNMP version to use
 		Community: envCommunity,                   // the SNMPv2c community string to be used
-		Logger:    log.New(os.Stdout, "", 0),      // add a logger TODO this might not be wanted?
+		Logger:    log.New(os.Stdout, "", 0),      // add a logger
 		Timeout:   time.Duration(2) * time.Second, // the timeout from the request in seconds
 		MaxOids:   60,                             // max OIDs permitted in a single call, 60 "seems to be a common value that works"
 	}
 
-	// connect using the connection parameters
-	// WHAT?!!! We're using UDP but still connect?
+	// create a socket to utilize
 	err := connectionParams.Connect()
 	if err != nil {
 		log.Fatalf("Connect() err: %v", err)
@@ -80,7 +77,72 @@ func main() {
 	// goroutine for doing a thing every pollPeriod seconds
 	go func() {
 		for range time.Tick(time.Second * time.Duration(pollPeriod)) {
-			snmpPoll(connectionParams, oids)
+			//			snmpPoll(connectionParams, oids, filename)
+
+			// send SNMP GET request with the specified OIDs
+			result, err2 := connectionParams.Get(oids)
+			if err2 != nil {
+				log.Fatalf("Get() err: %v", err2)
+			}
+
+			// craft a SnmpPacket to check its size
+
+			fmt.Print(connectionParams.Version)
+
+			var pdus []g.SnmpPDU
+			for _, oid := range oids {
+				pdus = append(pdus, g.SnmpPDU{oid, g.Null, nil})
+			}
+
+			// need & before? just wanna make a snmp packet type struct
+			request := g.SnmpPacket{
+				Version:            0x1,                                 // Version2c SnmpVersion = 0x1
+				Community:          envCommunity,                        // community from env variable
+				MsgFlags:           1,                                   // <- v3, need to figure out how to ignore gracefully
+				SecurityModel:      1,                                   // <- v3, need to figure out how to ignore gracefully
+				SecurityParameters: connectionParams.SecurityParameters, // an INTERFACE, need to figure out how to ignore gracefully
+				ContextEngineID:    connectionParams.ContextEngineID,    // <- v3, need to figure out how to ignore gracefully
+				ContextName:        connectionParams.ContextName,        // <- v3, need to figure out how to ignore gracefully
+				Error:              0,                                   // SNMPError 0 *should* be the lowest enum i.e. NoError
+				ErrorIndex:         0,                                   // uint8, 0 default
+				PDUType:            0xa0,                                // GetRequest PDUType = 0xa0
+				NonRepeaters:       0,                                   // uint8 0 default
+				MaxRepetitions:     (777 & 0x7FFFFFFF),                  // placeholder maxreps
+				Variables:          pdus,                                // got them from above, hopefully they work...
+			}
+
+			// get the byte array form of the packet so we can check the size of it
+			requestSize, err3 := request.MarshalMsg()
+			if err3 != nil {
+				log.Fatal(err)
+			}
+
+			resultSize, err := result.MarshalMsg()
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			fmt.Print(resultSize)
+			fmt.Print(unsafe.Sizeof(result))
+
+			writeToFile(
+				filename,
+				"size of request: "+string(requestSize)+
+					", size of response: "+string(resultSize)+
+					", total size: "+string((requestSize+resultSize)))
+
+			// print the content of result to stdOut
+			for i, variable := range result.Variables {
+				fmt.Printf("%d: oid: %s ", i, variable.Name)
+
+				switch variable.Type {
+				case g.OctetString:
+					fmt.Printf("string: %s\n", string(variable.Value.([]byte)))
+				default:
+					fmt.Printf("number: %d\n", g.ToBigInt(variable.Value))
+				}
+			}
+
 		}
 	}()
 
@@ -90,7 +152,9 @@ func main() {
 // input:
 //	connectionparams: that one struct we put together before
 //	oids: the SNMP OIDs that we want to get info about
-func snmpPoll(connectionParams *g.GoSNMP, oids []string) {
+
+// moved most of the code up above to avoid having to bombard this function with variables..
+func snmpPoll(connectionParams *g.GoSNMP, oids []string, filename string) {
 
 	// send SNMP GET request with the specified OIDs
 	result, err2 := connectionParams.Get(oids)
@@ -98,11 +162,23 @@ func snmpPoll(connectionParams *g.GoSNMP, oids []string) {
 		log.Fatalf("Get() err: %v", err2)
 	}
 
-	// print the size of the struct
-	// TODO do that cool calculation thing!
+	packetOut := x.mkSnmpPacket(GetRequest, pdus, 0, 0)
+
+	resultSize, err := result.MarshalMsg()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	writeToFile(
+		filename,
+		"size of request: "+string(requestSize)+
+			", size of response: "+string(resultSize)+
+			", total size: "+string((requestSize+resultSize)))
+
+	fmt.Print(resultSize)
 	fmt.Print(unsafe.Sizeof(result))
 
-	// print the result to stdOut
+	// print the content of result to stdOut
 	for i, variable := range result.Variables {
 		fmt.Printf("%d: oid: %s ", i, variable.Name)
 
@@ -113,6 +189,7 @@ func snmpPoll(connectionParams *g.GoSNMP, oids []string) {
 			fmt.Printf("number: %d\n", g.ToBigInt(variable.Value))
 		}
 	}
+
 }
 
 // Creates a file that is unique to each run
