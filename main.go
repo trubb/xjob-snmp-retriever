@@ -15,7 +15,7 @@ import (
 func main() {
 
 	// setup environment variables
-	fileName, pollPeriod, envTarget, envCommunity, port := setup()
+	fileName, pollPeriod, envTarget, envCommunity, port, oids := setup()
 
 	// put together a struct containing connection parameters
 	connectionParams := &snmp.GoSNMP{
@@ -45,21 +45,17 @@ func main() {
 		log.Println("Query latency in seconds:", time.Since(sent).Seconds())
 	}
 
-	// retrieve list of OIDs
-	oids := selectOidArr("numbers")
+	// loop instead of goroutine for doing a thing every pollPeriod seconds
+	// because the routine didn't work as expected and time is short
+	for range time.Tick(time.Second * time.Duration(pollPeriod)) {
+		sizeOfRequest := snmpMockRequest(connectionParams, oids)
+		sizeOfResponse := snmpPoll(connectionParams, oids)
 
-	// goroutine for doing a thing every pollPeriod seconds
-	go func() {
-		for range time.Tick(time.Second * time.Duration(pollPeriod)) {
-			sizeOfRequest := snmpMockRequest(connectionParams, oids)
-			sizeOfResponse := snmpPoll(connectionParams, oids)
-
-			// write these as just the integers so we can do CSV format?
-			sizes := fmt.Sprintf(" size of request: %d, size of response: %d, total size: %d",
-				sizeOfRequest, sizeOfResponse, (sizeOfRequest + sizeOfResponse))
-			writeToFile(fileName, sizes)
-		}
-	}()
+		// write these as just the integers so we can do CSV format?
+		sizes := fmt.Sprintf("%d, %d, %d",
+			sizeOfRequest, sizeOfResponse, (sizeOfRequest + sizeOfResponse))
+		writeToFile(fileName, sizes)
+	}
 }
 
 // get the environment variables and turn them into usable variables
@@ -69,8 +65,9 @@ func main() {
 //	envTarget:		ip address of target
 //	envPort:			the udp port to use
 //	envCommunity:	the SNMPv2c community to use
-func setup() (string, uint64, string, string, uint64) {
+func setup() (string, uint64, string, string, uint64, []string) {
 	fileName := createFile()
+	writeToFile(fileName, "size of request, size of response, total size")
 	envPollPeriod := os.Getenv("XJOB_POLLPERIOD")
 	envTarget := os.Getenv("XJOB_SNMP_TARGET")
 	envCommunity := os.Getenv("XJOB_SNMP_COMMUNITY")
@@ -92,7 +89,30 @@ func setup() (string, uint64, string, string, uint64) {
 	pollPeriod, _ := strconv.ParseUint(envPollPeriod, 10, 16)
 	port, _ := strconv.ParseUint(envPort, 10, 16)
 
-	return fileName, pollPeriod, envTarget, envCommunity, port
+	oids := []string{
+		/*
+			".1.3.6.1.4.1.2021.10.1.3.1", // TEST linux cpu 1 min load
+			".1.3.6.1.2.1.1.3.0",         // TEST linux system uptime
+			".1.3.6.1.2.1.2.2.1.2.2",     // TEST linux ifName for if@index .2
+		*/
+		// interface at index .59 added to end of all OIDs
+		"1.3.6.1.2.1.31.1.1.1.1.59",  // ifName
+		"1.3.6.1.2.1.2.2.1.14.59",    // ifInErrors
+		"1.3.6.1.2.1.2.2.1.20.59",    // ifOutErrors
+		"1.3.6.1.2.1.2.2.1.15.59",    // IfInUnknownProtos
+		"1.3.6.1.2.1.2.2.1.19.59",    // ifOutDiscards
+		"1.3.6.1.2.1.2.2.1.13.59",    // ifInDiscards
+		"1.3.6.1.2.1.31.1.1.1.6.59",  // ifHCInOctets
+		"1.3.6.1.2.1.31.1.1.1.10.59", // ifHCOutOctets
+		"1.3.6.1.2.1.31.1.1.1.9.59",  // ifHCInBroadcastPkts
+		"1.3.6.1.2.1.31.1.1.1.13.59", // ifHCOutBroadcastPkts
+		"1.3.6.1.2.1.31.1.1.1.8.59",  // ifHCInMulticastPkts
+		"1.3.6.1.2.1.31.1.1.1.12.59", // ifHCOutMulticastPkts
+		"1.3.6.1.2.1.31.1.1.1.7.59",  // ifHCInUcastPkts
+		"1.3.6.1.2.1.31.1.1.1.11.59", // ifHCOutUcastPkts
+	}
+
+	return fileName, pollPeriod, envTarget, envCommunity, port, oids
 }
 
 // craft a mock SnmpPacket to check its size
@@ -215,57 +235,4 @@ func writeToFile(target string, input string) error {
 		log.Fatal(err)
 	}
 	return nil
-}
-
-// Pick what OIDs we should use
-// Highly unclear if we even need this but it's nice to have hidden down here
-// Input:
-//	oidFormat: a string stating what OID "format" to use
-// Output:
-//	oids || oidNames:	a string array of OIDs in integer or named form.
-func selectOidArr(oidFormat string) []string {
-
-	// OIDs in dot separated form
-	oids := []string{
-		"1.3.6.1.2.1.31.1.1.1.1",  // ifName
-		"1.3.6.1.2.1.2.2.1.14",    // ifInErrors
-		"1.3.6.1.2.1.2.2.1.20",    // ifOutErrors
-		"1.3.6.1.2.1.2.2.1.15",    // IfInUnknownProtos
-		"1.3.6.1.2.1.2.2.1.19",    // ifOutDiscards
-		"1.3.6.1.2.1.2.2.1.13",    // ifInDiscards
-		"1.3.6.1.2.1.31.1.1.1.6",  // ifHCInOctets
-		"1.3.6.1.2.1.31.1.1.1.10", // ifHCOutOctets
-		"1.3.6.1.2.1.31.1.1.1.9",  // ifHCInBroadcastPkts
-		"1.3.6.1.2.1.31.1.1.1.13", // ifHCOutBroadcastPkts
-		"1.3.6.1.2.1.31.1.1.1.8",  // ifHCInMulticastPkts
-		"1.3.6.1.2.1.31.1.1.1.12", // ifHCOutMulticastPkts
-		"1.3.6.1.2.1.31.1.1.1.7",  // ifHCInUcastPkts
-		"1.3.6.1.2.1.31.1.1.1.11", // ifHCOutUcastPkts
-	}
-
-	// OIDs in named form
-	oidNames := []string{
-		"ifName",               // 1.3.6.1.2.1.31.1.1.1.1
-		"ifInErrors",           // 1.3.6.1.2.1.2.2.1.14
-		"ifOutErrors",          // 1.3.6.1.2.1.2.2.1.20
-		"IfInUnknownProtos",    // 1.3.6.1.2.1.2.2.1.15
-		"ifOutDiscards",        // 1.3.6.1.2.1.2.2.1.19
-		"ifInDiscards",         // 1.3.6.1.2.1.2.2.1.13
-		"ifHCInOctets",         // 1.3.6.1.2.1.31.1.1.1.6
-		"ifHCOutOctets",        // 1.3.6.1.2.1.31.1.1.1.10
-		"ifHCInBroadcastPkts",  // 1.3.6.1.2.1.31.1.1.1.9
-		"ifHCOutBroadcastPkts", // 1.3.6.1.2.1.31.1.1.1.13
-		"ifHCInMulticastPkts",  // 1.3.6.1.2.1.31.1.1.1.8
-		"ifHCOutMulticastPkts", // 1.3.6.1.2.1.31.1.1.1.12
-		"ifHCInUcastPkts",      // 1.3.6.1.2.1.31.1.1.1.7
-		"ifHCOutUcastPkts",     // 1.3.6.1.2.1.31.1.1.1.11
-	}
-
-	if oidFormat == "numbers" {
-		return oids
-	} else if oidFormat == "named" {
-		return oidNames
-	} else {
-		return nil
-	}
 }
