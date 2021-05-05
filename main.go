@@ -4,26 +4,54 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"time"
-	"unsafe"
 
-	// name the import
+	"github.com/pborman/getopt/v2"
+	// name the gosnmp import
 	snmp "github.com/gosnmp/gosnmp"
 )
+
+var envPollPeriod = getopt.IntLong("pollperiod", 0, 60, "How often to poll the target (seconds)")
+var envTarget = getopt.StringLong("target", 0, "", "The target host to poll")
+var envCommunity = getopt.StringLong("community", 0, "", "The snmp v2c community to use")
+var envPort = getopt.Uint16Long("port", 0, 161, "The udp port to use for polling")
 
 func main() {
 
 	// setup environment variables
-	fileName, pollPeriod, envTarget, envCommunity, port, oids := setup()
+	getopt.Parse()
+	fileName := createFile()
+
+	oids := []string{
+		/*
+			".1.3.6.1.4.1.2021.10.1.3.1", // TEST linux cpu 1 min load
+			".1.3.6.1.2.1.1.3.0",         // TEST linux system uptime
+			".1.3.6.1.2.1.2.2.1.2.2",     // TEST linux ifName for if@index .2
+		*/
+		// interface at index .59 added to end of all OIDs to show possibility to do so
+		"1.3.6.1.2.1.31.1.1.1.1.59",  // ifName
+		"1.3.6.1.2.1.2.2.1.14.59",    // ifInErrors
+		"1.3.6.1.2.1.2.2.1.20.59",    // ifOutErrors
+		"1.3.6.1.2.1.2.2.1.15.59",    // IfInUnknownProtos
+		"1.3.6.1.2.1.2.2.1.19.59",    // ifOutDiscards
+		"1.3.6.1.2.1.2.2.1.13.59",    // ifInDiscards
+		"1.3.6.1.2.1.31.1.1.1.6.59",  // ifHCInOctets
+		"1.3.6.1.2.1.31.1.1.1.10.59", // ifHCOutOctets
+		"1.3.6.1.2.1.31.1.1.1.9.59",  // ifHCInBroadcastPkts
+		"1.3.6.1.2.1.31.1.1.1.13.59", // ifHCOutBroadcastPkts
+		"1.3.6.1.2.1.31.1.1.1.8.59",  // ifHCInMulticastPkts
+		"1.3.6.1.2.1.31.1.1.1.12.59", // ifHCOutMulticastPkts
+		"1.3.6.1.2.1.31.1.1.1.7.59",  // ifHCInUcastPkts
+		"1.3.6.1.2.1.31.1.1.1.11.59", // ifHCOutUcastPkts
+	}
 
 	// put together a struct containing connection parameters
 	connectionParams := &snmp.GoSNMP{
-		Target:    envTarget,                      // the network node that we want to reply
+		Target:    *envTarget,                     // the network node that we want to reply
 		Transport: "udp",                          // the transport protocol to use
-		Port:      uint16(port),                   // the UDP port to be used
+		Port:      uint16(*envPort),               // the UDP port to be used
 		Version:   snmp.Version2c,                 // the SNMP version to use
-		Community: envCommunity,                   // the SNMPv2c community string to be used
+		Community: *envCommunity,                  // the SNMPv2c community string to be used
 		Logger:    log.New(os.Stdout, "", 0),      // add a logger
 		Timeout:   time.Duration(2) * time.Second, // the timeout from the request in seconds
 		MaxOids:   60,                             // max OIDs permitted in a single call, default 60
@@ -47,7 +75,7 @@ func main() {
 
 	// loop instead of goroutine for doing a thing every pollPeriod seconds
 	// because the routine didn't work as expected and time is short
-	for range time.Tick(time.Second * time.Duration(pollPeriod)) {
+	for range time.Tick(time.Second * time.Duration(*envPollPeriod)) {
 		sizeOfRequest := snmpMockRequest(connectionParams, oids)
 		sizeOfResponse := snmpPoll(connectionParams, oids)
 
@@ -56,63 +84,6 @@ func main() {
 			sizeOfRequest, sizeOfResponse, (sizeOfRequest + sizeOfResponse))
 		writeToFile(fileName, sizes)
 	}
-}
-
-// get the environment variables and turn them into usable variables
-// Output:
-//	fileName:			the name of the file to write to
-//	pollPeriod: 	how often to poll the target, in seconds
-//	envTarget:		ip address of target
-//	envPort:			the udp port to use
-//	envCommunity:	the SNMPv2c community to use
-func setup() (string, uint64, string, string, uint64, []string) {
-	fileName := createFile()
-	writeToFile(fileName, "size of request, size of response, total size")
-	envPollPeriod := os.Getenv("XJOB_POLLPERIOD")
-	envTarget := os.Getenv("XJOB_SNMP_TARGET")
-	envCommunity := os.Getenv("XJOB_SNMP_COMMUNITY")
-	envPort := os.Getenv("XJOB_SNMP_PORT")
-
-	if len(envPollPeriod) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_TARGET")
-	}
-	if len(envTarget) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_TARGET")
-	}
-	if len(envPort) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_PORT")
-	}
-	if len(envCommunity) <= 0 {
-		log.Fatal("environment variable not set: XJOB_SNMP_COMMUNITY")
-	}
-
-	pollPeriod, _ := strconv.ParseUint(envPollPeriod, 10, 16)
-	port, _ := strconv.ParseUint(envPort, 10, 16)
-
-	oids := []string{
-		/*
-			".1.3.6.1.4.1.2021.10.1.3.1", // TEST linux cpu 1 min load
-			".1.3.6.1.2.1.1.3.0",         // TEST linux system uptime
-			".1.3.6.1.2.1.2.2.1.2.2",     // TEST linux ifName for if@index .2
-		*/
-		// interface at index .59 added to end of all OIDs
-		"1.3.6.1.2.1.31.1.1.1.1.59",  // ifName
-		"1.3.6.1.2.1.2.2.1.14.59",    // ifInErrors
-		"1.3.6.1.2.1.2.2.1.20.59",    // ifOutErrors
-		"1.3.6.1.2.1.2.2.1.15.59",    // IfInUnknownProtos
-		"1.3.6.1.2.1.2.2.1.19.59",    // ifOutDiscards
-		"1.3.6.1.2.1.2.2.1.13.59",    // ifInDiscards
-		"1.3.6.1.2.1.31.1.1.1.6.59",  // ifHCInOctets
-		"1.3.6.1.2.1.31.1.1.1.10.59", // ifHCOutOctets
-		"1.3.6.1.2.1.31.1.1.1.9.59",  // ifHCInBroadcastPkts
-		"1.3.6.1.2.1.31.1.1.1.13.59", // ifHCOutBroadcastPkts
-		"1.3.6.1.2.1.31.1.1.1.8.59",  // ifHCInMulticastPkts
-		"1.3.6.1.2.1.31.1.1.1.12.59", // ifHCOutMulticastPkts
-		"1.3.6.1.2.1.31.1.1.1.7.59",  // ifHCInUcastPkts
-		"1.3.6.1.2.1.31.1.1.1.11.59", // ifHCOutUcastPkts
-	}
-
-	return fileName, pollPeriod, envTarget, envCommunity, port, oids
 }
 
 // craft a mock SnmpPacket to check its size
@@ -175,8 +146,6 @@ func snmpPoll(connectionParams *snmp.GoSNMP, oids []string) int {
 	}
 	sizeOfResponse := len(responseSize)
 
-	fmt.Print(unsafe.Sizeof(snmpGetResponse), "\n") // just to see if we can get anything here
-
 	// print the content of result to stdOut
 	for i, variable := range snmpGetResponse.Variables {
 		fmt.Printf("%d: oid: %s ", i, variable.Name)
@@ -212,6 +181,7 @@ func createFile() string {
 	if err != nil {
 		log.Fatal(err)
 	}
+	writeToFile(fileName, "size of request, size of response, total size")
 
 	return fileName
 }
