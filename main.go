@@ -29,26 +29,21 @@ func main() {
 			".1.3.6.1.2.1.2.2.1.2.2",     // TEST linux ifName for if@index .2
 		*/
 		// interface at index .59 added to end of all OIDs to show possibility to do so
-		"1.3.6.1.2.1.31.1.1.1.1.59",     // ifName
-		"1.3.6.1.2.1.2.2.1.14.59",       // ifInErrors
-		"1.3.6.1.2.1.2.2.1.20.59",       // ifOutErrors
-		"1.3.6.1.2.1.2.2.1.15.59",       // IfInUnknownProtos
-		"1.3.6.1.2.1.2.2.1.19.59",       // ifOutDiscards
-		"1.3.6.1.2.1.2.2.1.13.59",       // ifInDiscards
-		"1.3.6.1.2.1.31.1.1.1.6.59",     // ifHCInOctets
-		"1.3.6.1.2.1.31.1.1.1.10.59",    // ifHCOutOctets
-		"1.3.6.1.2.1.31.1.1.1.9.59",     // ifHCInBroadcastPkts
-		"1.3.6.1.2.1.31.1.1.1.13.59",    // ifHCOutBroadcastPkts
-		"1.3.6.1.2.1.31.1.1.1.8.59",     // ifHCInMulticastPkts
-		"1.3.6.1.2.1.31.1.1.1.12.59",    // ifHCOutMulticastPkts
-		"1.3.6.1.2.1.31.1.1.1.7.59",     // ifHCInUcastPkts
-		"1.3.6.1.2.1.31.1.1.1.11.59",    // ifHCOutUcastPkts
-		"1.3.6.1.4.1.9.9.109.1.1.1.1.8", // cpmCPUTotal5minRev
-		"1.3.6.1.4.1.9.9.109.1.1.1.1.7", // cpmCPUTotal1minRev
-		"1.3.6.1.4.1.9.9.109.1.1.1.1.6", // cpmCPUTotal5secRev
-		"1.3.6.1.4.1.9.9.48.1.1.1.6",    // ciscoMemoryPoolFree
-		"1.3.6.1.4.1.9.9.48.1.1.1.5",    // ciscoMemoryPoolUsed
-		"1.3.6.1.2.1.1.3.0",             // sysUpTime
+		"1.3.6.1.2.1.31.1.1.1.1.59",  // ifName
+		"1.3.6.1.2.1.2.2.1.14.59",    // ifInErrors
+		"1.3.6.1.2.1.2.2.1.20.59",    // ifOutErrors
+		"1.3.6.1.2.1.2.2.1.15.59",    // IfInUnknownProtos
+		"1.3.6.1.2.1.2.2.1.19.59",    // ifOutDiscards
+		"1.3.6.1.2.1.2.2.1.13.59",    // ifInDiscards
+		"1.3.6.1.2.1.31.1.1.1.6.59",  // ifHCInOctets
+		"1.3.6.1.2.1.31.1.1.1.10.59", // ifHCOutOctets
+		"1.3.6.1.2.1.31.1.1.1.9.59",  // ifHCInBroadcastPkts
+		"1.3.6.1.2.1.31.1.1.1.13.59", // ifHCOutBroadcastPkts
+		"1.3.6.1.2.1.31.1.1.1.8.59",  // ifHCInMulticastPkts
+		"1.3.6.1.2.1.31.1.1.1.12.59", // ifHCOutMulticastPkts
+		"1.3.6.1.2.1.31.1.1.1.7.59",  // ifHCInUcastPkts
+		"1.3.6.1.2.1.31.1.1.1.11.59", // ifHCOutUcastPkts
+		"1.3.6.1.2.1.1.3.0",          // sysUpTime
 	}
 
 	// put together a struct containing connection parameters
